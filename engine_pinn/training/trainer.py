@@ -47,11 +47,12 @@ class Trainer:
         x_scaled = batch["x"].to(self.device)
         y_raw = batch["y_raw"].to(self.device)
         x_raw = batch["x_raw"].to(self.device).detach().requires_grad_(True)
+        lhv_raw = batch["lhv_raw"].to(self.device)
 
         if training:
             self.optimizer.zero_grad(set_to_none=True)
 
-        out = self.model(x_scaled, x_raw)
+        out = self.model(x_scaled, x_raw, lhv_raw)
         losses = self.loss_fn(out, y_raw, x_raw)
 
         if training:

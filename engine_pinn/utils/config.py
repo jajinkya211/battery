@@ -22,8 +22,8 @@ class TrainConfig:
     batch_size: int = 128
     lr: float = 1e-3
     weight_decay: float = 1e-5
-    lambda_phys: float = 1.0
-    lambda_mono: float = 0.2
+    lambda_phys: float = 10.0
+    lambda_mono: float = 2.0
     epochs_phase1: int = 25
     epochs_phase2: int = 50
     patience: int = 15

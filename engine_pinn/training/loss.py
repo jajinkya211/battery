@@ -20,7 +20,7 @@ class LossBreakdown:
 class PINNLoss(nn.Module):
     """Data + physics + monotonicity loss with autograd-based constraints."""
 
-    def __init__(self, lambda_phys: float = 1.0, lambda_mono: float = 0.2) -> None:
+    def __init__(self, lambda_phys: float = 10.0, lambda_mono: float = 2.0) -> None:
         super().__init__()
         self.lambda_phys = lambda_phys
         self.lambda_mono = lambda_mono
@@ -41,9 +41,11 @@ class PINNLoss(nn.Module):
         x_raw: torch.Tensor,
         bsfc_pred: torch.Tensor,
         nox_pred: torch.Tensor,
+        latents: torch.Tensor,
     ) -> torch.Tensor:
         ones_bsfc = torch.ones_like(bsfc_pred)
         ones_nox = torch.ones_like(nox_pred)
+        ones_l1 = torch.ones_like(latents[:, 0:1])
 
         grad_bsfc = torch.autograd.grad(
             bsfc_pred,
@@ -61,20 +63,34 @@ class PINNLoss(nn.Module):
             retain_graph=True,
             allow_unused=True,
         )[0]
+        grad_l1 = torch.autograd.grad(
+            latents[:, 0:1],
+            x_raw,
+            grad_outputs=ones_l1,
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True,
+        )[0]
 
         if grad_bsfc is None:
             grad_bsfc = torch.zeros_like(x_raw)
         if grad_nox is None:
             grad_nox = torch.zeros_like(x_raw)
+        if grad_l1 is None:
+            grad_l1 = torch.zeros_like(x_raw)
 
         dbsfc_dbmep = grad_bsfc[:, 0]
         dnox_dbmep = grad_nox[:, 0]
+        dnox_dh2 = grad_nox[:, 1]
         dnox_dspark = grad_nox[:, 2]
+        dl1_dbmep = grad_l1[:, 0]
 
         violation = (
             torch.relu(dbsfc_dbmep).pow(2).mean()
             + torch.relu(-dnox_dbmep).pow(2).mean()
+            + torch.relu(-dnox_dh2).pow(2).mean()
             + torch.relu(-dnox_dspark).pow(2).mean()
+            + torch.relu(-dl1_dbmep).pow(2).mean()
         )
         return violation
 
@@ -96,7 +112,7 @@ class PINNLoss(nn.Module):
             torch.log(torch.clamp(nox_pred, min=eps)), torch.log(nox_true)
         )
         physics_loss = self._physics_penalty(latents)
-        mono_loss = self._monotonicity_penalty(x_raw_requires_grad, bsfc_pred, nox_pred)
+        mono_loss = self._monotonicity_penalty(x_raw_requires_grad, bsfc_pred, nox_pred, latents)
 
         total = data_loss + self.lambda_phys * physics_loss + self.lambda_mono * mono_loss
         return LossBreakdown(total=total, data=data_loss, physics=physics_loss, monotonicity=mono_loss)

@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import logging
 import random
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import mean_squared_error, r2_score
 
-from engine_pinn.data.dataset import (
-    FEATURE_COLUMNS,
-    TARGET_COLUMNS,
-    build_dataloaders,
-    load_or_generate_dataframe,
-)
+from engine_pinn.data.dataset import build_dataloaders, load_or_generate_dataframe
 from engine_pinn.models.pinn import EnginePINN
 from engine_pinn.training.loss import PINNLoss
 from engine_pinn.training.trainer import Trainer
 from engine_pinn.utils.config import PhysicsConfig, TrainConfig
-from engine_pinn.utils.plotting import plot_latent_trends, plot_training_curves
+from engine_pinn.utils.plotting import (
+    plot_latent_trends,
+    plot_parity_plots,
+    plot_residuals_vs_inputs,
+    plot_training_curves,
+)
 
 
 def setup_logging() -> None:
@@ -37,6 +37,11 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+def mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    eps = 1e-8
+    return float(np.mean(np.abs((y_true - y_pred) / np.maximum(np.abs(y_true), eps))) * 100.0)
+
+
 def evaluate_and_collect_latents(
     model: EnginePINN,
     loader: torch.utils.data.DataLoader,
@@ -50,15 +55,15 @@ def evaluate_and_collect_latents(
         for batch in loader:
             x = batch["x"].to(device)
             x_raw = batch["x_raw"].to(device)
-            out = model(x, x_raw)
+            lhv_raw = batch["lhv_raw"].to(device)
+            out = model(x, x_raw, lhv_raw)
 
             y_true = y_scaler.inverse_transform(batch["y"].numpy())
-            y_pred_scaled = np.hstack([out["bsfc"].cpu().numpy(), out["nox"].cpu().numpy()])
-            # predictions are in raw physical scale by design
-            y_pred = y_pred_scaled
+            y_pred = np.hstack([out["bsfc"].cpu().numpy(), out["nox"].cpu().numpy()])
 
             latent = out["latents"].cpu().numpy()
             x_raw_np = batch["x_raw"].cpu().numpy()
+            lhv_np = batch["lhv_raw"].cpu().numpy()
 
             for i in range(len(x_raw_np)):
                 rows.append(
@@ -67,6 +72,7 @@ def evaluate_and_collect_latents(
                         "H2_percentage": x_raw_np[i, 1],
                         "Spark_Ignition_Timing": x_raw_np[i, 2],
                         "Lambda": x_raw_np[i, 3],
+                        "LHV": lhv_np[i, 0],
                         "BSFC_true": y_true[i, 0],
                         "NOx_true": y_true[i, 1],
                         "BSFC_pred": y_pred[i, 0],
@@ -77,6 +83,16 @@ def evaluate_and_collect_latents(
                     }
                 )
     return pd.DataFrame(rows)
+
+
+def log_metrics(results_df: pd.DataFrame, logger: logging.Logger) -> None:
+    for target in ["BSFC", "NOx"]:
+        yt = results_df[f"{target}_true"].to_numpy()
+        yp = results_df[f"{target}_pred"].to_numpy()
+        rmse = float(np.sqrt(mean_squared_error(yt, yp)))
+        r2 = float(r2_score(yt, yp))
+        target_mape = mape(yt, yp)
+        logger.info("%s -> RMSE=%.6f | R2=%.4f | MAPE=%.2f%%", target, rmse, r2, target_mape)
 
 
 def main() -> None:
@@ -99,7 +115,7 @@ def main() -> None:
     )
 
     nox_a_init = max(float(df["NOx"].max()), 1e-3)
-    model = EnginePINN(lhv=phys_cfg.lhv, nox_a_init=nox_a_init, nox_b_init=phys_cfg.nox_b_init).to(device)
+    model = EnginePINN(nox_a_init=nox_a_init, nox_b_init=phys_cfg.nox_b_init).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay)
     loss_fn = PINNLoss(lambda_phys=train_cfg.lambda_phys, lambda_mono=train_cfg.lambda_mono)
@@ -126,9 +142,13 @@ def main() -> None:
     )
 
     results_df = evaluate_and_collect_latents(model, dataset.test_loader, dataset.y_scaler, device)
+    log_metrics(results_df, logger)
+
     results_path = train_cfg.plots_dir / "test_predictions_with_latents.csv"
     results_df.to_csv(results_path, index=False)
     plot_latent_trends(results_df, train_cfg.plots_dir / "latent_sensitivity.png")
+    plot_parity_plots(results_df, train_cfg.plots_dir / "parity_plots.png")
+    plot_residuals_vs_inputs(results_df, train_cfg.plots_dir / "residuals_vs_inputs.png")
 
     logger.info("Training complete. Results saved to: %s", results_path)
 

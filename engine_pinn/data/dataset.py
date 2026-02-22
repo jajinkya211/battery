@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,17 @@ from torch.utils.data import DataLoader, Dataset
 
 FEATURE_COLUMNS = ["BMEP", "H2_percentage", "Spark_Ignition_Timing", "Lambda"]
 TARGET_COLUMNS = ["BSFC", "NOx"]
+
+
+def get_lhv_from_h2(h2: float) -> float:
+    """Map H2 blend percentage to LHV (MJ/kg)."""
+    if h2 < 9.0:
+        return 49.93
+    if h2 < 21.5:
+        return 52.39
+    if h2 < 27.5:
+        return 53.59
+    return 54.58
 
 
 @dataclass
@@ -38,6 +49,7 @@ class EngineDataset(Dataset):
         targets_scaled: np.ndarray,
         features_raw: np.ndarray,
         targets_raw: np.ndarray,
+        lhv_raw: np.ndarray,
     ) -> None:
         if len(features_scaled) != len(targets_scaled):
             raise ValueError("Feature and target lengths must match.")
@@ -46,6 +58,7 @@ class EngineDataset(Dataset):
         self.targets_scaled = torch.tensor(targets_scaled, dtype=torch.float32)
         self.features_raw = torch.tensor(features_raw, dtype=torch.float32)
         self.targets_raw = torch.tensor(targets_raw, dtype=torch.float32)
+        self.lhv_raw = torch.tensor(lhv_raw.reshape(-1, 1), dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.features_scaled)
@@ -56,6 +69,7 @@ class EngineDataset(Dataset):
             "y": self.targets_scaled[idx],
             "x_raw": self.features_raw[idx],
             "y_raw": self.targets_raw[idx],
+            "lhv_raw": self.lhv_raw[idx],
         }
 
 
@@ -71,6 +85,8 @@ def load_or_generate_dataframe(
         missing = required_cols.difference(df.columns)
         if missing:
             raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
+        if "LHV" not in df.columns:
+            df["LHV"] = df["H2_percentage"].apply(get_lhv_from_h2)
         return df
 
     rng = np.random.default_rng(random_state)
@@ -79,22 +95,24 @@ def load_or_generate_dataframe(
     spark = rng.uniform(-10.0, 30.0, n_samples)
     lamb = rng.uniform(0.85, 1.25, n_samples)
 
+    lhv = np.array([get_lhv_from_h2(v) for v in h2], dtype=float)
+
     fmep = 0.4 + 0.08 * bmep + 0.02 * rng.normal(size=n_samples)
     eff = np.clip(0.28 + 0.015 * bmep - 0.0015 * (spark - 10) ** 2 + 0.003 * h2, 0.2, 0.8)
     temp = 800 + 9.0 * spark + 6.5 * bmep + 2.0 * h2 + 20 * rng.normal(size=n_samples)
     temp = np.clip(temp, 300, None)
 
-    lhv = 42_000.0
-    bsfc = (3600.0 / lhv) * ((bmep + fmep) / (np.maximum(bmep, 1e-3) * eff))
+    bsfc = (3600.0 / (lhv * 1000.0)) * ((bmep + fmep) / (np.maximum(bmep, 1e-3) * eff))
     bsfc *= 1.0 + 0.02 * rng.normal(size=n_samples)
 
-    a_true, b_true = 1200.0, 4.8
-    nox = a_true * np.exp(-b_true / np.maximum(temp / 1000.0, 1e-4))
-    nox *= 1 + 0.06 * np.maximum(spark, 0) / 30.0
+    a_true, b_true, c_true = 1200.0, 4.8, 1.25
+    l3_norm = np.maximum(temp / 1000.0, 1e-4)
+    nox = a_true * np.power(l3_norm, c_true) * np.exp(-b_true / l3_norm)
+    nox *= 1 + 0.08 * np.maximum(spark, 0) / 30.0
     nox *= 1.0 + 0.03 * rng.normal(size=n_samples)
     nox = np.clip(nox, 1e-3, None)
 
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {
             "BMEP": bmep,
             "H2_percentage": h2,
@@ -102,9 +120,9 @@ def load_or_generate_dataframe(
             "Lambda": lamb,
             "BSFC": bsfc,
             "NOx": nox,
+            "LHV": lhv,
         }
     )
-    return df
 
 
 def _split_dataframe(
@@ -117,6 +135,12 @@ def _split_dataframe(
     val_ratio = val_size / (1.0 - test_size)
     train_df, val_df = train_test_split(train_df, test_size=val_ratio, random_state=random_state)
     return train_df, val_df, test_df
+
+
+def _extract_lhv(df: pd.DataFrame) -> np.ndarray:
+    if "LHV" in df.columns:
+        return df["LHV"].to_numpy(dtype=float)
+    return np.array([get_lhv_from_h2(h) for h in df["H2_percentage"].to_numpy()], dtype=float)
 
 
 def build_dataloaders(
@@ -141,9 +165,13 @@ def build_dataloaders(
     x_test = x_scaler.transform(test_df[FEATURE_COLUMNS])
     y_test = y_scaler.transform(test_df[TARGET_COLUMNS])
 
-    train_ds = EngineDataset(x_train, y_train, train_df[FEATURE_COLUMNS].to_numpy(), train_df[TARGET_COLUMNS].to_numpy())
-    val_ds = EngineDataset(x_val, y_val, val_df[FEATURE_COLUMNS].to_numpy(), val_df[TARGET_COLUMNS].to_numpy())
-    test_ds = EngineDataset(x_test, y_test, test_df[FEATURE_COLUMNS].to_numpy(), test_df[TARGET_COLUMNS].to_numpy())
+    train_lhv = _extract_lhv(train_df)
+    val_lhv = _extract_lhv(val_df)
+    test_lhv = _extract_lhv(test_df)
+
+    train_ds = EngineDataset(x_train, y_train, train_df[FEATURE_COLUMNS].to_numpy(), train_df[TARGET_COLUMNS].to_numpy(), train_lhv)
+    val_ds = EngineDataset(x_val, y_val, val_df[FEATURE_COLUMNS].to_numpy(), val_df[TARGET_COLUMNS].to_numpy(), val_lhv)
+    test_ds = EngineDataset(x_test, y_test, test_df[FEATURE_COLUMNS].to_numpy(), test_df[TARGET_COLUMNS].to_numpy(), test_lhv)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)

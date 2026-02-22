@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 import torch.nn as nn
 
 from engine_pinn.models.layers import LatentActivationBlock
-
-
-@dataclass
-class ForwardOutput:
-    """Structured model output for predictions and latent variables."""
-
-    bsfc: torch.Tensor
-    nox: torch.Tensor
-    latents: torch.Tensor
 
 
 class EnginePINN(nn.Module):
@@ -27,12 +17,10 @@ class EnginePINN(nn.Module):
         self,
         input_dim: int = 4,
         hidden_dims: tuple[int, int] = (64, 32),
-        lhv: float = 42_000.0,
         nox_a_init: float = 500.0,
         nox_b_init: float = 5.0,
     ) -> None:
         super().__init__()
-        self.lhv = lhv
         h1, h2 = hidden_dims
 
         self.feature_extractor = nn.Sequential(
@@ -49,6 +37,7 @@ class EnginePINN(nn.Module):
 
         self.nox_a_raw = nn.Parameter(torch.tensor(float(max(nox_a_init, 1e-3))))
         self.nox_b_raw = nn.Parameter(torch.tensor(float(max(nox_b_init, 1e-3))))
+        self.nox_c_raw = nn.Parameter(torch.tensor(1.0))
 
         self._init_latent_biases()
 
@@ -60,6 +49,10 @@ class EnginePINN(nn.Module):
     def nox_b(self) -> torch.Tensor:
         return torch.nn.functional.softplus(self.nox_b_raw)
 
+    @property
+    def nox_c(self) -> torch.Tensor:
+        return torch.nn.functional.softplus(self.nox_c_raw) + 0.5
+
     def _init_latent_biases(self) -> None:
         nn.init.xavier_uniform_(self.latent_head.weight)
         with torch.no_grad():
@@ -69,12 +62,13 @@ class EnginePINN(nn.Module):
             self.latent_head.bias[2] = 1.0
 
     def set_physics_scalar_training(self, enabled: bool) -> None:
-        """Freeze/unfreeze A and B scalar parameters for multi-phase training."""
+        """Freeze/unfreeze A, B, C scalar parameters for multi-phase training."""
         self.nox_a_raw.requires_grad = enabled
         self.nox_b_raw.requires_grad = enabled
+        self.nox_c_raw.requires_grad = enabled
 
-    def forward(self, x_scaled: torch.Tensor, x_raw: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Forward pass using scaled features and raw features for physics equations."""
+    def forward(self, x_scaled: torch.Tensor, x_raw: torch.Tensor, lhv_raw: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Forward pass using scaled features/raw features and per-sample LHV."""
         eps = 1e-6
         feats = self.feature_extractor(x_scaled)
         z_unconstrained = self.latent_head(feats)
@@ -85,8 +79,10 @@ class EnginePINN(nn.Module):
         l2 = latents[:, 1:2]
         l3 = latents[:, 2:3]
 
-        bsfc = (3600.0 / self.lhv) * ((bmep + l1) / (torch.clamp(bmep, min=eps) * torch.clamp(l2, min=eps)))
-        nox = self.nox_a * torch.exp(-self.nox_b / torch.clamp(l3, min=eps))
+        lhv_kj = torch.clamp(lhv_raw * 1000.0, min=eps)
+        bsfc = (3600.0 / lhv_kj) * ((bmep + l1) / (torch.clamp(bmep, min=eps) * torch.clamp(l2, min=eps)))
+        l3_safe = torch.clamp(l3, min=eps)
+        nox = self.nox_a * torch.pow(l3_safe, self.nox_c) * torch.exp(-self.nox_b / l3_safe)
         nox = torch.clamp(nox, min=eps)
 
         return {"bsfc": bsfc, "nox": nox, "latents": latents}
