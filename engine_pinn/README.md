@@ -55,3 +55,20 @@ An end-to-end notebook is included at:
 - `engine_pinn/Engine_PINN_End_to_End.ipynb`
 
 It covers data loading/synthesis, model setup, two-phase training, evaluation, and latent sensitivity plotting in one place.
+
+## Run in Google Colab (Step-by-Step)
+
+1. Open a new Colab notebook.
+2. Clone your repo in a cell (replace URL):
+   ```bash
+   !git clone https://github.com/<your-org>/<your-repo>.git
+   %cd <your-repo>
+   ```
+3. Open and run `engine_pinn/Engine_PINN_End_to_End.ipynb` (or copy its cells).
+4. Run the first setup cells in order:
+   - path/sys.path setup cell
+   - dependency install cell (`pip install -r engine_pinn/requirements.txt`)
+5. (Optional) Upload your own CSV and set `custom_csv_path = Path('/content/your_file.csv')`.
+6. Run remaining cells to train, evaluate, and generate artifacts.
+
+The notebook now includes explicit Colab setup, dependency install, optional custom CSV path handling, and artifact download snippets.
