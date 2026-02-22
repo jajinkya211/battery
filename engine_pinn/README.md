@@ -47,3 +47,11 @@ Where:
 2. **Phase 2:** unfreeze all parameters and optimize full composite loss.
 
 Features include early stopping, LR scheduling, model checkpointing, and latent sensitivity plots.
+
+## Jupyter Notebook
+
+An end-to-end notebook is included at:
+
+- `engine_pinn/Engine_PINN_End_to_End.ipynb`
+
+It covers data loading/synthesis, model setup, two-phase training, evaluation, and latent sensitivity plotting in one place.
