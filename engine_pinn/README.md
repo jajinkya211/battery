@@ -52,7 +52,7 @@ Features include early stopping, LR scheduling, model checkpointing, and latent 
 
 An end-to-end notebook is included at:
 
-- `engine_pinn/Engine_PINN_End_to_End.ipynb`
+- `engine_pinn/Engine_PINN_Standalone.ipynb`
 
 It covers data loading/synthesis, model setup, two-phase training, evaluation, and latent sensitivity plotting in one place.
 
@@ -64,7 +64,7 @@ It covers data loading/synthesis, model setup, two-phase training, evaluation, a
    !git clone https://github.com/<your-org>/<your-repo>.git
    %cd <your-repo>
    ```
-3. Open and run `engine_pinn/Engine_PINN_End_to_End.ipynb` (or copy its cells).
+3. Open and run `engine_pinn/Engine_PINN_Standalone.ipynb` (or copy its cells).
 4. Run the first setup cells in order:
    - path/sys.path setup cell
    - dependency install cell (`pip install -r engine_pinn/requirements.txt`)
@@ -90,7 +90,7 @@ Then re-run the notebook bootstrap/import cells. The updated notebook also auto-
 ## Standalone Notebook Mode (Only `.ipynb` + data CSV)
 
 If you want to run with **only two files**:
-- `Engine_PINN_End_to_End.ipynb`
+- `Engine_PINN_Standalone.ipynb`
 - your data CSV (with columns: `BMEP`, `H2_percentage`, `Spark_Ignition_Timing`, `Lambda`, `BSFC`, `NOx`)
 
 Use the embedded self-run notebook cells:
