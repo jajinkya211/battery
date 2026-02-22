@@ -51,6 +51,7 @@ class PINNLoss(nn.Module):
             grad_outputs=ones_bsfc,
             create_graph=True,
             retain_graph=True,
+            allow_unused=True,
         )[0]
         grad_nox = torch.autograd.grad(
             nox_pred,
@@ -58,7 +59,13 @@ class PINNLoss(nn.Module):
             grad_outputs=ones_nox,
             create_graph=True,
             retain_graph=True,
+            allow_unused=True,
         )[0]
+
+        if grad_bsfc is None:
+            grad_bsfc = torch.zeros_like(x_raw)
+        if grad_nox is None:
+            grad_nox = torch.zeros_like(x_raw)
 
         dbsfc_dbmep = grad_bsfc[:, 0]
         dnox_dbmep = grad_nox[:, 0]
