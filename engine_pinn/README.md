@@ -86,3 +86,16 @@ Run these cells first:
 ```
 
 Then re-run the notebook bootstrap/import cells. The updated notebook also auto-searches common Colab locations and adds the correct parent folder to `sys.path`.
+
+## Standalone Notebook Mode (Only `.ipynb` + data CSV)
+
+If you want to run with **only two files**:
+- `Engine_PINN_End_to_End.ipynb`
+- your data CSV (with columns: `BMEP`, `H2_percentage`, `Spark_Ignition_Timing`, `Lambda`, `BSFC`, `NOx`)
+
+Use the embedded self-run notebook cells:
+1. Put both files in the same folder (or set `train_cfg.data_csv` to full CSV path).
+2. Run all cells top-to-bottom.
+3. The notebook installs missing deps, defines all classes/functions inline, trains, and exports artifacts.
+
+No `engine_pinn` package import is required in this mode.
