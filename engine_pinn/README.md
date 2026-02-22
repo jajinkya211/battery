@@ -72,3 +72,17 @@ It covers data loading/synthesis, model setup, two-phase training, evaluation, a
 6. Run remaining cells to train, evaluate, and generate artifacts.
 
 The notebook now includes explicit Colab setup, dependency install, optional custom CSV path handling, and artifact download snippets.
+
+### Colab Troubleshooting: `ModuleNotFoundError: No module named engine_pinn`
+
+If you see this in Colab, the notebook is not running from a folder that contains the `engine_pinn/` package.
+
+Run these cells first:
+
+```python
+!git clone https://github.com/<your-org>/<your-repo>.git
+%cd <your-repo>
+!ls engine_pinn/__init__.py
+```
+
+Then re-run the notebook bootstrap/import cells. The updated notebook also auto-searches common Colab locations and adds the correct parent folder to `sys.path`.
